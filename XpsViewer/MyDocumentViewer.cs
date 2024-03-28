@@ -68,7 +68,6 @@ namespace XpsViewer
             IList allSegments = null; // collection of text segments
             TextRange findResult = null; // could also use object, does not need type
 
-            MessageBox.Show("hafjkhfjkashkj");
 
             //Give ourselves focus, this ensures that the selection
             //will be made visible after it's made.
