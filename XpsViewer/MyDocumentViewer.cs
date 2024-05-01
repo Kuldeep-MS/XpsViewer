@@ -23,6 +23,7 @@ using static System.Net.Mime.MediaTypeNames;
 using Microsoft.Windows.Imaging;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
+using System.Windows.Input;
 
 namespace XpsViewer
 {
@@ -43,10 +44,15 @@ namespace XpsViewer
         public float[] scores;
         public int[] rank;
         public int currentIndex = 0;
+        public int[] rankImages;
+        public int currentIndexImages = 0;
+        public float[] scoresImage;
         public bool updated = false;
         ImageSearchEmbeddingsCreator embedCreator;
         ImageSearchEmbeddingsCreator imageEmbedCreator;
         String currentSearchString;
+        String currentImageSearchString;
+
         IList textPointersStart;
         IList textPointersEnd;
         object searchTextSegment;
@@ -79,6 +85,7 @@ namespace XpsViewer
         public override void OnApplyTemplate()
         {
             base.OnApplyTemplate();
+            //this.MouseLeftButtonDown += DocumentViewer_MouseLeftButtonDown;
 
             if (IsMultiSearchEnabled)
             {
@@ -91,16 +98,34 @@ namespace XpsViewer
                 Thickness margin = _myfindToolbar.Margin;
                 margin.Left = 50;
                 _myfindToolbar.Margin = margin;
+
+
+                // Define your new icons
+                System.Windows.Controls.Canvas newPreviousIcon = new System.Windows.Controls.Canvas(); // Customize this with your new icon
+                System.Windows.Controls.Canvas newNextIcon = new System.Windows.Controls.Canvas(); // Customize this with your new icon
+
+                // Replace the icons in the toolbar's resources
+                // The keys "FindPreviousContent" and "FindNextContent" are based on your XAML context
+                _myfindToolbar.Resources["FindPreviousContent"] = newPreviousIcon;
+                _myfindToolbar.Resources["FindNextContent"] = newNextIcon;
+
+                System.Windows.Controls.Button findNextButton = _myfindToolbar.FindName("FindNextButton") as System.Windows.Controls.Button;
+                System.Windows.Controls.Button findPreviousButton = _myfindToolbar.FindName("FindPreviousButton") as System.Windows.Controls.Button;
+
+                EventInfo clickEvent = typeof(System.Windows.Controls.Button).GetEvent("Click");
+                // Remove the existing Click event handlers from the buttons
+                ReflectionHelper.RemoveEventHandler(findNextButton, clickEvent.Name);
+                ReflectionHelper.RemoveEventHandler(findPreviousButton, clickEvent.Name);
+
+                // Add your own Click event handlers to the buttons
+                clickEvent.AddEventHandler(findNextButton, new RoutedEventHandler(OnFindNextClick));
+                clickEvent.AddEventHandler(findPreviousButton, new RoutedEventHandler(OnFindPreviousClick));
+
                 // replace button click handler of find toolbar
                 EventInfo evt = _myfindToolbar.GetType().GetEvent("FindClicked");
                 ReflectionHelper.RemoveEventHandler(_myfindToolbar, evt.Name); // remove existing handler
                 evt.AddEventHandler(_myfindToolbar, new EventHandler(OnFindInvoked)); // attach own handler
-                System.Windows.Controls.Button findNextButton = _myfindToolbar.FindName("FindNextButton") as System.Windows.Controls.Button;
-                System.Windows.Controls.Button findPreviousButton = _myfindToolbar.FindName("FindPreviousButton") as System.Windows.Controls.Button;
 
-                // Attach Click event handlers to the buttons
-                findNextButton.Click += (s, args) => { /* Handle Find Next button click */ };
-                findPreviousButton.Click += (s, args) => { /* Handle Find Previous button click */ };
 
                 // get some methods that will need to be invoked
                 _miFind = this.GetType().GetMethod("Find", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -109,34 +134,29 @@ namespace XpsViewer
             }
         }
 
-
-        /// <summary>
-        /// This is replacing DocumentViewer.OnFindInvoked(object sender, EventArgs e)
-        /// </summary>
-        private void OnFindInvoked(object sender, EventArgs e)
+        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
         {
-            var toolbarType = _myfindToolbar.GetType();
-            var nextButtonField = toolbarType.GetField("nextButton", BindingFlags.NonPublic | BindingFlags.Instance);
-            var previousButtonField = toolbarType.GetField("previousButton", BindingFlags.NonPublic | BindingFlags.Instance);
-
-            if (nextButtonField != null && previousButtonField != null)
+            if (highlightRect != null)
             {
-                var nextButton = nextButtonField.GetValue(_myfindToolbar) as System.Windows.Controls.Button;
-                var previousButton = previousButtonField.GetValue(_myfindToolbar) as System.Windows.Controls.Button;
-
-                // Assuming the buttons have a "IsClicked" property
-                var isNextButtonClicked = (bool)nextButton.GetType().GetProperty("IsClicked").GetValue(nextButton);
-                var isPreviousButtonClicked = (bool)previousButton.GetType().GetProperty("IsClicked").GetValue(previousButton);
-
-                if (isNextButtonClicked)
-                {
-                    // Next button was clicked
-                }
-                else if (isPreviousButtonClicked)
-                {
-                    // Previous button was clicked
-                }
+                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                highlightRect = null;
             }
+
+        }
+
+        public void MouseLeftButtonDown2()
+        {
+            if (highlightRect != null)
+            {
+                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                highlightRect = null;
+            }
+
+        }
+
+        private void OnFindNextClick(object sender, RoutedEventArgs e)
+        {
+
             IList allSegments = null; // collection of text segments
             System.Windows.Documents.TextRange findResult = null; // could also use object, does not need type
 
@@ -146,14 +166,12 @@ namespace XpsViewer
             FieldInfo fiTextSegments = selection.GetType().GetPrivateFieldOfBase("_textSegments");
             IList textSegments = fiTextSegments.GetValue(selection) as IList; // List<System.Windows.Documents.TextSegment>
 
-            // Get the find toolbar
-            ToolBar findToolbar = this.GetType().GetPrivateFieldOfBase("_findToolbar").GetValue(this) as ToolBar;
 
             // Get the SearchText property
-            PropertyInfo piSearchText = findToolbar.GetType().GetProperty("SearchText", BindingFlags.Public | BindingFlags.Instance);
+            PropertyInfo piSearchText = _myfindToolbar.GetType().GetProperty("SearchText", BindingFlags.Public | BindingFlags.Instance);
 
             // Get the searchable text
-            string findSearchText = (string)piSearchText.GetValue(findToolbar);
+            string findSearchText = (string)piSearchText.GetValue(_myfindToolbar);
 
             // Get the TextContainer from the TextEditor
             FieldInfo piTextContainer = textEditor.GetType().GetPrivateFieldOfBase("_textContainer");
@@ -171,15 +189,8 @@ namespace XpsViewer
             // Get the Start TextPointer
             object pointer = startProp.GetValue(textContainer);
 
-            if (imageHighligted)
-            {
-                if (highlightRect != null)
-                {
-                    canvases[rank[currentIndex] - embeddings.Length].Children.Remove(highlightRect);
-                }
-            }
 
-            if (currentSearchString == findSearchText)
+            if (currentSearchString == findSearchText && currentIndex >= 0 )
             {
                 currentIndex++;
             }
@@ -193,10 +204,9 @@ namespace XpsViewer
 
                 var model8 = ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Text).AsTask().Result;
                 var op = ImageSearchEmbeddingsCreator.MakeAvailableAsync();
-                var embedImageText = model8.CreateVectorForText(currentSearchString);
                 //rank = embedCreator.CalculateRanking();
 
-                float[] scores = new float[embeddings.Length];
+                scores = new float[embeddings.Length];
                 rank = new int[embeddings.Length];
 
                 for (int i = 0; i < embeddings.Length; i++)
@@ -205,18 +215,7 @@ namespace XpsViewer
                     scores[i] = score;
                 }
 
-                float[] scoresImage = new float[imageEmbeddings.Length];
-                //rankImage = new int[embeddings.Length];
-
-                for (int i = 0; i < imageEmbeddings.Length; i++)
-                {
-                    var score = CosineSimilarity(imageEmbeddings[i], embedImageText);
-                    scoresImage[i] = score;
-                }
-
-                // Append scores list from image embeddings to text embeddings
-                scores = scores.Concat(scoresImage).ToArray();
-
+               
                 var indexedFloats = scores.Select((value, index) => new { Value = value, Index = index })
                   .ToArray();
 
@@ -228,38 +227,13 @@ namespace XpsViewer
 
                 int offset = 0;
 
-               
+
                 MethodInfo getPositionAtOffsetMethod = start.GetType().GetMethod("CreatePointer", new Type[] { start.GetType(), typeof(int) });
             }
 
-            if (rank[currentIndex] >= embeddings.Length)
-            {
-                var i = rank[currentIndex] - embeddings.Length;
-                var region = paths[i].Data.Bounds;
-                // Create a semi-transparent rectangle to represent the highlight.
-                System.Windows.Shapes.Rectangle highlight = new System.Windows.Shapes.Rectangle
-                {
-                    Width = region.Width,
-                    Height = region.Height,
-                    Fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(128, 0, 0, 255)) // Semi-transparent blue
-                };
-
-
-                canvases[i].Children.Add(highlight);
-                System.Windows.Controls.Canvas.SetLeft(highlight, System.Windows.Controls.Canvas.GetLeft(paths[i]));
-                System.Windows.Controls.Canvas.SetTop(highlight, System.Windows.Controls.Canvas.GetTop(paths[i]));
-
-                // Position the highlight rectangle at the specified coordinates.
-                System.Windows.Controls.Canvas.SetLeft(highlight, region.Left);
-                System.Windows.Controls.Canvas.SetTop(highlight, region.Top);
-
-                imageHighligted = true;
-                highlightRect = highlight;
-
-                return;
-            }
-
-            imageHighligted = false;
+            if (currentIndex >= rank.Length || scores[rank[currentIndex]] < 0.80)
+            { return; }
+         //   imageHighligted = false;
             object highlighStartPointer = textPointersStart[rank[currentIndex]];
             object highlighEndPointer = textPointersEnd[rank[currentIndex]];
 
@@ -277,20 +251,20 @@ namespace XpsViewer
                                 .Invoke(new object[] { highlighStartPointer, highlighEndPointer }); // create a new textsegment with resetted offset
 
             //allSegments.Add(searchTextSegment);
-            
+
             for (int i = 1; i < textSegments.Count; i++)
             {
                 textSegments.RemoveAt(i); // remove all other segments
             }
             // Get the FindTextBox control from the FindToolBar
-            System.Windows.Controls.TextBox findTextBox = findToolbar.GetType().GetField("FindTextBox", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_myfindToolbar) as System.Windows.Controls.TextBox;
+            System.Windows.Controls.TextBox findTextBox = _myfindToolbar.GetType().GetField("FindTextBox", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_myfindToolbar) as System.Windows.Controls.TextBox;
 
             // Always search down
             _myfindToolbar.GetType().GetProperty("SearchUp").SetValue(_myfindToolbar, false);
 
             // Search and collect the find results
             int resultCount = 0;
-          //  do
+            //  do
             {
                 // invoke: DocumentViewerBase.Find(findToolBar)
                 findResult = _miFind.Invoke(this, new object[] { _myfindToolbar }) as System.Windows.Documents.TextRange;
@@ -307,17 +281,17 @@ namespace XpsViewer
                     resultCount++;
                 }*/
             }
-           // while (findResult != null && (MaxSearchResults == 0 || resultCount < MaxSearchResults)); // stop if no more results were found or limit is exceeded
+            // while (findResult != null && (MaxSearchResults == 0 || resultCount < MaxSearchResults)); // stop if no more results were found or limit is exceeded
 
-/*            if (allSegments == null)
-            {
-                // alert the user that we did not find anything
-                string searchText = _myfindToolbar.GetType().GetProperty("SearchText").GetValue(_myfindToolbar) as string;
-                string messageString = string.Format("Searched the document. Cannot find '{0}'.", searchText);
+            /*            if (allSegments == null)
+                        {
+                            // alert the user that we did not find anything
+                            string searchText = _myfindToolbar.GetType().GetProperty("SearchText").GetValue(_myfindToolbar) as string;
+                            string messageString = string.Format("Searched the document. Cannot find '{0}'.", searchText);
 
-                MessageBox.Show(messageString, "Find", MessageBoxButton.OK, MessageBoxImage.Asterisk);
-            }
-            else*/
+                            MessageBox.Show(messageString, "Find", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+                        }
+                        else*/
             {
                 // Call the Clear method on the TextSelection instance
                 this.Focus();
@@ -341,10 +315,86 @@ namespace XpsViewer
 
         }
 
+        private void OnFindPreviousClick(object sender, RoutedEventArgs e)
+        {
+            // Get the SearchText property
+            PropertyInfo piSearchText = _myfindToolbar.GetType().GetProperty("SearchText", BindingFlags.Public | BindingFlags.Instance);
+
+            // Get the searchable text
+            string findSearchText = (string)piSearchText.GetValue(_myfindToolbar);
+
+            if (highlightRect != null)
+            {
+                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+            }
+
+            if (currentImageSearchString == findSearchText && currentIndexImages >=0)
+            {
+                currentIndexImages++;
+            }
+            else
+            {
+                currentImageSearchString = findSearchText;
+                currentIndexImages = 0;
+                var model8 = ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Text).AsTask().Result;
+
+                var embedImageText = model8.CreateVectorForText(currentImageSearchString);
+
+                scoresImage = new float[imageEmbeddings.Length];
+
+                for (int i = 0; i < imageEmbeddings.Length; i++)
+                {
+                    var score = CosineSimilarity2(imageEmbeddings[i], embedImageText);
+                    scoresImage[i] = score;
+                }
+
+                var indexedFloats = scoresImage.Select((value, index) => new { Value = value, Index = index }).ToArray();
+
+                // Sort the indexed floats by value in descending order
+                Array.Sort(indexedFloats, (a, b) => b.Value.CompareTo(a.Value));
+
+                // Extract the top k indices
+                rankImages = indexedFloats.Select(item => item.Index).ToArray();
+            }
+
+            if (currentIndexImages >= rankImages.Length || scoresImage[rankImages[currentIndexImages]] < 0.31)
+            {
+                return;
+            }
+            var j = rankImages[currentIndexImages];
+
+            var region = paths[j].Data.Bounds;
+            // Create a semi-transparent rectangle to represent the highlight.
+            System.Windows.Shapes.Rectangle highlight = new System.Windows.Shapes.Rectangle
+            {
+                Width = region.Width,
+                Height = region.Height,
+                Fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(128, 0, 0, 255)) // Semi-transparent blue
+            };
+
+            canvases[j].Children.Add(highlight);
+            System.Windows.Controls.Canvas.SetLeft(highlight, System.Windows.Controls.Canvas.GetLeft(paths[j]));
+            System.Windows.Controls.Canvas.SetTop(highlight, System.Windows.Controls.Canvas.GetTop(paths[j]));
+
+            // Position the highlight rectangle at the specified coordinates.
+            System.Windows.Controls.Canvas.SetLeft(highlight, region.Left);
+            System.Windows.Controls.Canvas.SetTop(highlight, region.Top);
+
+            imageHighligted = true;
+            highlightRect = highlight;
+
+        }
+
+        private void OnFindInvoked(object sender, EventArgs e)
+        {
+        }
+            
         public async Task SetDocText(string text)
         {
             docText = text;
-
+            currentIndex = -1;
+            currentIndexImages = -1;
+            highlightRect = null;
             object textEditor = this.GetType().GetProperty("TextEditor", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(this); // System.Windows.Documents.TextEditor
 
             // Get the TextContainer from the TextEditor
@@ -453,8 +503,7 @@ namespace XpsViewer
             }
 
             FixedDocumentSequence fds = this.Document as FixedDocumentSequence;
-List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Windows.Media.Imaging.BitmapSource>();
-          //  bitmapSource = new List<BitmapSource>();
+            List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Windows.Media.Imaging.BitmapSource>();
 
             foreach (DocumentReference docRef in fds.References)
             {
@@ -473,49 +522,6 @@ List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Window
                 }
             }
 
-            /*// Get the FlowDocument
-            object doc1 = this.Document;
-            FlowDocument flowDocument = this.Document as FlowDocument;
-
-            // Get the FlowDocument type
-            Type flowDocumentType = typeof(FlowDocument);
-
-            // Get the Blocks property
-            PropertyInfo blocksProperty = flowDocumentType.GetProperty("Blocks");
-
-            // Get the BlockCollection
-            object blockCollection = blocksProperty.GetValue(flowDocument); 
-
-            System.Windows.Documents.BlockCollection blocks = blockCollection as System.Windows.Documents.BlockCollection;
-            // Traverse the BlockCollection
-            foreach (System.Windows.Documents.Block block in blocks)
-            {
-                if (block is System.Windows.Documents.Paragraph)
-                {
-                    System.Windows.Documents.Paragraph paragraph = block as System.Windows.Documents.Paragraph;
-                    foreach (System.Windows.Documents.Inline inline in paragraph.Inlines)
-                    {
-                        if (inline is System.Windows.Documents.InlineUIContainer)
-                        {
-                            System.Windows.Documents.InlineUIContainer inlineUIContainer = inline as System.Windows.Documents.InlineUIContainer;
-                            if (inlineUIContainer.Child is System.Windows.Controls.Image)
-                            {
-                                System.Windows.Controls.Image image = inlineUIContainer.Child as System.Windows.Controls.Image;
-                                System.Windows.Media.Imaging.BitmapSource bitmapSource = image.Source as System.Windows.Media.Imaging.BitmapSource;
-
-                                // Now you have the BitmapSource of the image
-                                // You can convert it to a Bitmap if you need to
-
-                                // To get the TextPointer to the image
-                                //TextPointer textPointer = inlineUIContainer.ContentStart;
-
-                                // Now you have the TextPointer to the image
-                            }
-                        }
-                    }
-                }
-            }*/
-
             await InitializeEmbeddings();
         }
 
@@ -523,40 +529,63 @@ List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Window
         {
             foreach (UIElement child in canvas.Children)
             {
+
                 if (child is System.Windows.Controls.Canvas childCanvas)
                 {
                     // Recursively traverse child canvases
                     TraverseCanvas(childCanvas);
-                  //  return;
                 }
                 else if (child is System.Windows.Shapes.Path path)
                 {
-                    var bounds = path.Data.GetRenderBounds(null);
-                    path.Measure(bounds.Size);
-                    path.Arrange(bounds);
-                    if (bitmapSource.Count != 0)
+                    // Check if the Fill property of the Path is an ImageBrush
+                    if (path.Fill is ImageBrush imageBrush)
                     {
-                        SolidColorBrush sr = new SolidColorBrush(System.Windows.Media.Color.FromArgb(128, 0, 0, 255)); // Semi-transparent yellow
-                        sr.Opacity = 0.8;
-                        // path.Fill = sr;
-                        
-                        Rectangle highlight = new Rectangle
+                        // Extract the ImageSource from the ImageBrush
+                        ImageSource imageSource = imageBrush.ImageSource;
+
+                        // Check if the ImageSource is a BitmapImage
+                        if (imageSource is BitmapSource bitSource)
                         {
-                            Width = bounds.Width,
-                            Height = bounds.Height,
-                            Fill = new SolidColorBrush(Color.FromArgb(128, 0, 0, 255)) // Semi-transparent blue
-                        };
+                            // Get the file path from the UriSource of the BitmapImage
 
-                    }
-                    var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
-                            (int)bounds.Width, (int)bounds.Height, 96, 96, PixelFormats.Pbgra32);
-                        bitmap.Render(path);
-                    // bitmap.
-                    BitmapSource bitSource = System.Windows.Media.Imaging.BitmapFrame.Create(bitmap);
-                    bitmapSource.Add(bitSource);
-                    paths.Add(path);
+                            // Add the BitmapSource to your collection
+                            bitmapSource.Add(bitSource);
+                        }
 
-                    canvases.Add(canvas);
+
+                        var bounds = path.Data.GetRenderBounds(null);
+                        path.Measure(bounds.Size);
+                        path.Arrange(bounds);
+                        if (bitmapSource.Count != 0)
+                        {
+
+                            Rectangle highlight = new Rectangle
+                            {
+                                Width = bounds.Width,
+                                Height = bounds.Height,
+                                Fill = new SolidColorBrush(Color.FromArgb(128, 0, 0, 255)) // Semi-transparent blue
+                            };
+                        }
+
+                        try
+                        {
+/*                            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                                (int)bounds.Width, (int)bounds.Height, 96, 96, PixelFormats.Pbgra32);
+                            bitmap.Render(path);
+                            BitmapSource bitSource = System.Windows.Media.Imaging.BitmapFrame.Create(bitmap);
+                            bitmapSource.Add(bitSource);
+*/                            paths.Add(path);
+
+                            canvases.Add(canvas);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Handle the exception (e.g., log it)
+                            Console.WriteLine(ex.Message);
+                            continue; // Continue to the next iteration of the loop
+                        }
+                    }    
+
                 }
             }
         }
@@ -573,6 +602,34 @@ List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Window
         
         private async Task InitializeEmbeddings()
         {
+            imageEmbeddings = new EmbeddingVector[bitmapSource.Count];
+
+
+            for (int i = 0; i < bitmapSource.Count; i++)
+            {
+                BitmapSource bitSource = bitmapSource[i]; // Your BitmapSource
+                /*                                          // Ensure the BitmapSource is in Bgra32 format, or convert it if necessary
+                if (bitSource.Format != PixelFormats.Bgra32)
+                {
+                    // Conversion to Bgra32 format is required
+                    bitSource = new FormatConvertedBitmap(bitSource, PixelFormats.Bgra32, null, 0);
+                }*/
+
+                // Get pixels as an array of bytes
+                var stride = bitSource.PixelWidth * bitSource.Format.BitsPerPixel / 8;
+                var bytes = new byte[stride * bitSource.PixelHeight];
+                bitSource.CopyPixels(bytes, stride, 0);
+                var buffer = bytes.AsBuffer();
+                var format = bitSource.Format;
+                // Create an ImageBuffer
+                ImageBuffer imageBuffer = new ImageBuffer(buffer, Microsoft.Windows.Imaging.PixelFormat.Bgra32, (uint) bitSource.PixelWidth, (uint) bitSource.PixelHeight);
+                //imageBuffer.CopyFromBuffer(bytes);
+
+                if (imageEmbedCreator == null) { imageEmbedCreator = await ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Image); }
+
+                imageEmbeddings[i] = await imageEmbedCreator.CreateVectorForImageAsync(imageBuffer);
+            }
+
             if (!SemanticTextEmbeddingsCreator.IsAvailable())
             {
                 SemanticTextEmbeddingsCreator.MakeAvailableAsync().AsTask().Wait();
@@ -588,27 +645,7 @@ List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Window
                 embeddings[i] = await embedCreator.CreateVectorForTextAsync(actualSentences[i]);
             }
 
-            imageEmbeddings = new EmbeddingVector[bitmapSource.Count];
 
-
-            for (int i = 0; i < bitmapSource.Count; i++)
-            {
-                BitmapSource bitSource = bitmapSource[i]; // Your BitmapSource
-
-                // Get pixels as an array of bytes
-                var stride = bitSource.PixelWidth * bitSource.Format.BitsPerPixel / 8;
-                var bytes = new byte[stride * bitSource.PixelHeight];
-                bitSource.CopyPixels(bytes, stride, 0);
-                var buffer = bytes.AsBuffer();
-
-                // Create an ImageBuffer
-                ImageBuffer imageBuffer = new ImageBuffer(buffer, Microsoft.Windows.Imaging.PixelFormat.Bgra32, (uint) bitSource.PixelWidth, (uint) bitSource.PixelHeight);
-                //imageBuffer.CopyFromBuffer(bytes);
-
-                if (imageEmbedCreator == null) { imageEmbedCreator = await ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Image); }
-
-                imageEmbeddings[i] = await imageEmbedCreator.CreateVectorForImageAsync(imageBuffer);
-            }
         }
 
         public static Microsoft.Windows.Imaging.PixelFormat GetPixelFormatFromBitmapPixelFormat(BitmapPixelFormat bitmapPixelFormat)

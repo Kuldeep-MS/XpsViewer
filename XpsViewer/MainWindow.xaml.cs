@@ -105,9 +105,11 @@ namespace XpsViewer
                 dep.Add();
 
                 dv.SetDocText(docText);
-              //  var bitmap = dv.GetBitmapSource();
+                this.MouseLeftButtonDown += DocumentViewer_MouseLeftButtonDown;
+
+                //  var bitmap = dv.GetBitmapSource();
                 //var paths = dv.GetPaths();
-               // showImages(bitmap, paths, dv.canvases);
+                // showImages(bitmap, paths, dv.canvases);
 
             }
             catch (Exception ex)
@@ -119,12 +121,23 @@ namespace XpsViewer
 
         }
 
+        private void DocumentViewer_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            dv.MouseLeftButtonDown2();
+/*            if (highlightRect != null)
+            {
+                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                highlightRect = null;
+            }
+*/
+        }
+
         private async Task showImages(List<BitmapSource> images, List<System.Windows.Shapes.Path> paths, List<System.Windows.Controls.Canvas> canvases)
         {
             int i = 0;
             foreach (BitmapSource bit in images)
             {
-                myImage.Source = bit;
+              //  myImage.Source = bit;
                 // Add wait for 3 seconds below
 
                 var region = paths[i].Data.Bounds;

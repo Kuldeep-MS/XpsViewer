@@ -12,7 +12,6 @@
             <RowDefinition Height="1.2*"/>
             <RowDefinition Height="1*"/>
             <RowDefinition Height="10*"/>
-            <RowDefinition Height="0*"/>
 
         </Grid.RowDefinitions>
         <ComboBox Grid.Row="0" x:Name="cmbBox" />
@@ -20,6 +19,5 @@
         <TextBlock Grid.Row="2"  x:Name="txtBlock" Height="30" HorizontalAlignment="Center" TextWrapping="Wrap"/>
         <!--<DocumentViewer Grid.Row="3"  x:Name="dv" />-->
         <local:MyDocumentViewer Grid.Row="3" x:Name="dv" />
-        <Image x:Name="myImage" Grid.Row="4"/>
     </Grid>
 </Window>
