@@ -1,5 +1,4 @@
-﻿using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Documents;
+﻿using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.Windows.SemanticSearch;
 using System;
@@ -17,7 +16,7 @@ using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
-using System.Windows.Controls;
+using Microsoft.Windows.Vision;
 
 using static System.Net.Mime.MediaTypeNames;
 using Microsoft.Windows.Imaging;
@@ -39,7 +38,8 @@ namespace XpsViewer
         public List<string> actualSentences;
         public EmbeddingVector[] embeddings;
         public EmbeddingVector[] imageEmbeddings;
-
+        public List<EmbeddingVector> imageTextEmbeddings;
+        public List<int> imageIndexesForText;
         public int[] indexes;
         public float[] scores;
         public int[] rank;
@@ -47,6 +47,8 @@ namespace XpsViewer
         public int[] rankImages;
         public int currentIndexImages = 0;
         public float[] scoresImage;
+        public int[] uniqueIndexes;
+        public List<double> offsetList = new List<double>();
         public bool updated = false;
         ImageSearchEmbeddingsCreator embedCreator;
         ImageSearchEmbeddingsCreator imageEmbedCreator;
@@ -57,11 +59,12 @@ namespace XpsViewer
         IList textPointersEnd;
         object searchTextSegment;
 
+        public bool IsTextSearch = true;
         bool imageHighligted = false;
         System.Windows.Shapes.Rectangle highlightRect;
         private ToolBar _myfindToolbar; // MS.Internal.Documents.FindToolBar
         private object _mydocumentScrollInfo; // MS.Internal.Documents.DocumentGrid
-
+        private System.Windows.Controls.ScrollViewer scrollViewer;
         private MethodInfo _miFind; // DocumentViewerBase.Find(FindToolBar)
         private MethodInfo _miGoToTextBox; // FindToolBar.GoToTextBox()
         private MethodInfo _miMakeSelectionVisible; // DocumentGrid.MakeSelectionVisible()
@@ -92,6 +95,9 @@ namespace XpsViewer
                 // get some private fields from the base class DocumentViewer
                 _myfindToolbar = this.GetType().GetPrivateFieldOfBase("_findToolbar").GetValue(this) as ToolBar;
                 _mydocumentScrollInfo = this.GetType().GetPrivateFieldOfBase("_documentScrollInfo").GetValue(this);
+                scrollViewer = this.GetType().GetPrivateFieldOfBase("_scrollViewer").GetValue(this) as System.Windows.Controls.ScrollViewer;//, BindingFlags.NonPublic | BindingFlags.Instance);
+
+
                 // Increase the size of the toolbar
                 _myfindToolbar.Height = 40;
                 _myfindToolbar.Width = 3000;
@@ -138,7 +144,7 @@ namespace XpsViewer
         {
             if (highlightRect != null)
             {
-                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                canvases[uniqueIndexes[currentIndexImages]].Children.Remove(highlightRect);
                 highlightRect = null;
             }
 
@@ -148,15 +154,14 @@ namespace XpsViewer
         {
             if (highlightRect != null)
             {
-                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                canvases[uniqueIndexes[currentIndexImages]].Children.Remove(highlightRect);
                 highlightRect = null;
             }
 
         }
 
-        private void OnFindNextClick(object sender, RoutedEventArgs e)
+        private void PerformTextSearch(bool forward)
         {
-
             IList allSegments = null; // collection of text segments
             System.Windows.Documents.TextRange findResult = null; // could also use object, does not need type
 
@@ -189,10 +194,20 @@ namespace XpsViewer
             // Get the Start TextPointer
             object pointer = startProp.GetValue(textContainer);
 
+            
 
-            if (currentSearchString == findSearchText && currentIndex >= 0 )
+            if (currentSearchString == findSearchText && currentIndex >= 0)
             {
-                currentIndex++;
+                if (currentIndex > 0 && forward == false)
+                {
+                    currentIndex--;
+                }
+                else if (currentIndex == 0 && forward == false)
+                { }
+                else
+                {
+                    currentIndex++;
+                }
             }
             else
             {
@@ -211,11 +226,16 @@ namespace XpsViewer
 
                 for (int i = 0; i < embeddings.Length; i++)
                 {
+                    if (embeddings[i] == null)
+                    {
+                        scores[i] = 0;
+                        continue;
+                    }
                     var score = CosineSimilarity(embeddings[i], inputStringEmbed);
                     scores[i] = score;
                 }
 
-               
+
                 var indexedFloats = scores.Select((value, index) => new { Value = value, Index = index })
                   .ToArray();
 
@@ -233,7 +253,7 @@ namespace XpsViewer
 
             if (currentIndex >= rank.Length || scores[rank[currentIndex]] < 0.80)
             { return; }
-         //   imageHighligted = false;
+            //   imageHighligted = false;
             object highlighStartPointer = textPointersStart[rank[currentIndex]];
             object highlighEndPointer = textPointersEnd[rank[currentIndex]];
 
@@ -314,8 +334,21 @@ namespace XpsViewer
             _miGoToTextBox.Invoke(_myfindToolbar, null);
 
         }
+        private void OnFindNextClick(object sender, RoutedEventArgs e)
+        {
+            if (IsTextSearch)
+            {
+                PerformTextSearch(true);
+            }
+            else
+            {
+                PerformImageSearch(true);
+            }
 
-        private void OnFindPreviousClick(object sender, RoutedEventArgs e)
+            
+        }
+
+        private void PerformImageSearch(bool forward)
         {
             // Get the SearchText property
             PropertyInfo piSearchText = _myfindToolbar.GetType().GetProperty("SearchText", BindingFlags.Public | BindingFlags.Instance);
@@ -325,12 +358,26 @@ namespace XpsViewer
 
             if (highlightRect != null)
             {
-                canvases[rankImages[currentIndexImages]].Children.Remove(highlightRect);
+                if (currentIndexImages < uniqueIndexes.Length)
+                {
+                    canvases[uniqueIndexes[currentIndexImages]].Children.Remove(highlightRect);
+                }
             }
 
-            if (currentImageSearchString == findSearchText && currentIndexImages >=0)
+            if (currentImageSearchString == findSearchText && currentIndexImages >= 0)
             {
-                currentIndexImages++;
+                if (currentIndexImages > 0 && forward == false)
+                {
+                    currentIndexImages = currentIndexImages - 1;
+                }
+                else if (currentIndexImages == 0 && forward == false)
+                { return; }
+                else if (currentIndexImages == uniqueIndexes.Length - 1 && forward == true)
+                { return; }
+                else
+                {
+                    currentIndexImages++;
+                }
             }
             else
             {
@@ -348,6 +395,23 @@ namespace XpsViewer
                     scoresImage[i] = score;
                 }
 
+                var scoresImageText = new float[imageTextEmbeddings.Count];
+                // calculate score for imageTextEmbeddings
+                for (int i = 0; i < imageTextEmbeddings.Count; i++)
+                {
+                    var score = CosineSimilarity2(imageTextEmbeddings[i], embedImageText);
+                    float scaling = 0.3f;
+                    scoresImageText[i] = score * scaling;
+                }
+
+                // ramk the scores by index for imageTextEmbeddings
+                var indexedFloatsImageText = scoresImageText.Select((value, index) => new { Value = value, Index = index })
+                  .ToArray();
+                Array.Sort(indexedFloatsImageText, (a, b) => b.Value.CompareTo(a.Value));
+
+
+                var rankImageText = indexedFloatsImageText.Select(item => imageIndexesForText[item.Index]).ToArray();
+
                 var indexedFloats = scoresImage.Select((value, index) => new { Value = value, Index = index }).ToArray();
 
                 // Sort the indexed floats by value in descending order
@@ -355,13 +419,30 @@ namespace XpsViewer
 
                 // Extract the top k indices
                 rankImages = indexedFloats.Select(item => item.Index).ToArray();
+
+                // for rankImages and rankImageText, create a new array wit both where the indexes are sorted by their corresponding scoresImage and scoresImageText
+                // Create a list of (index, score) pairs for images
+                var imageScoreList = scoresImage.Select((score, index) => new { Index = index, Score = score });
+
+                // Create a list of (index, score) pairs for image text
+                var imageTextScoreList = scoresImageText.Select((score, index) => new { Index = imageIndexesForText[index], Score = score });
+
+                // Concatenate the two lists
+                var combinedList = imageScoreList.Concat(imageTextScoreList);
+
+                // Sort by score and select the indexes
+                var sortedIndexes = combinedList.OrderByDescending(x => x.Score).Select(x => x.Index).ToArray();
+
+                // remove the repeated occurring indexes
+                uniqueIndexes = sortedIndexes.Distinct().ToArray();
+
             }
 
-            if (currentIndexImages >= rankImages.Length || scoresImage[rankImages[currentIndexImages]] < 0.31)
+            if (currentIndexImages >= uniqueIndexes.Length)// || scoresImage[rankImages[currentIndexImages]] < 0.31)
             {
                 return;
             }
-            var j = rankImages[currentIndexImages];
+            var j = uniqueIndexes[currentIndexImages];
 
             var region = paths[j].Data.Bounds;
             // Create a semi-transparent rectangle to represent the highlight.
@@ -371,7 +452,7 @@ namespace XpsViewer
                 Height = region.Height,
                 Fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(128, 0, 0, 255)) // Semi-transparent blue
             };
-
+            scrollViewer.ScrollToVerticalOffset(offsetList[j]);
             canvases[j].Children.Add(highlight);
             System.Windows.Controls.Canvas.SetLeft(highlight, System.Windows.Controls.Canvas.GetLeft(paths[j]));
             System.Windows.Controls.Canvas.SetTop(highlight, System.Windows.Controls.Canvas.GetTop(paths[j]));
@@ -382,11 +463,30 @@ namespace XpsViewer
 
             imageHighligted = true;
             highlightRect = highlight;
+        }
 
+        private void OnFindPreviousClick(object sender, RoutedEventArgs e)
+        {
+            if (IsTextSearch)
+            {
+                PerformTextSearch(false);
+            }
+            else
+            {
+                PerformImageSearch(false);
+            }
         }
 
         private void OnFindInvoked(object sender, EventArgs e)
         {
+            /*if (IsTextSearch)
+            {
+                PerformTextSearch(true);
+            }
+            else
+            {
+                PerformImageSearch(true);
+            }*/
         }
             
         public async Task SetDocText(string text)
@@ -569,12 +669,69 @@ namespace XpsViewer
 
                         try
                         {
-/*                            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
-                                (int)bounds.Width, (int)bounds.Height, 96, 96, PixelFormats.Pbgra32);
-                            bitmap.Render(path);
-                            BitmapSource bitSource = System.Windows.Media.Imaging.BitmapFrame.Create(bitmap);
-                            bitmapSource.Add(bitSource);
-*/                            paths.Add(path);
+                            /*                            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                                                            (int)bounds.Width, (int)bounds.Height, 96, 96, PixelFormats.Pbgra32);
+                                                        bitmap.Render(path);
+                                                        BitmapSource bitSource = System.Windows.Media.Imaging.BitmapFrame.Create(bitmap);
+                                                        bitmapSource.Add(bitSource);
+
+                            */
+                                                       //get the position of path object
+                                                      //  var position = System.Windows.Controls.Canvas.GetLeft(path);
+                            // Assuming 'this' is an instance of DocumentViewer
+
+                            // Assuming 'path' is the Path element you want to scroll to
+                            // and 'canvas' is the Canvas containing the Path
+                            scrollViewer = this.GetType().GetPrivateFieldOfBase("_scrollViewer").GetValue(this) as System.Windows.Controls.ScrollViewer;
+                            GeneralTransform childTransform = path.TransformToAncestor(canvas);
+                            Rect rectangle = childTransform.TransformBounds(new Rect(new Point(0, 0), path.RenderSize));
+
+                            FixedDocumentSequence fds = this.Document as FixedDocumentSequence;
+                            List<System.Windows.Media.Imaging.BitmapSource> bitmaps = new List<System.Windows.Media.Imaging.BitmapSource>();
+
+                            foreach (DocumentReference docRef in fds.References)
+                            {
+                                FixedDocument doc = docRef.GetDocument(false);
+                                int pageNumber = 0;
+                                bool found = false;
+                                foreach (PageContent pageContent in doc.Pages)
+                                {
+                                    pageNumber++;
+
+                                    FixedPage page = (FixedPage)pageContent.GetPageRoot(false);
+                                    try
+                                    {
+                                        path.TransformToAncestor(page);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine(ex.Message);
+                                        continue;
+
+                                    }
+                                    if (path.TransformToAncestor(page) != null)
+                                    {
+                                        // Get the position of the Canvas in the FixedPage
+                                        GeneralTransform transform = path.TransformToAncestor(page);
+                                        Point position = transform.Transform(new Point(0, 0));
+
+                                        double offset = (pageNumber - 1) * (page.Height + page.Margin.Top + page.Margin.Bottom) + position.Y ;
+                                        // Scroll to the position of the Canvas
+                                        offsetList.Add(offset);
+                                        found = true;
+                                        scrollViewer.ScrollToVerticalOffset(offset);
+                                        break;
+                                       // scrollViewer.ScrollToHorizontalOffset(position.X);
+                                    }
+                                }
+
+                                if (found)
+                                {
+                                    break;
+                                }
+                            }
+
+                            paths.Add(path);
 
                             canvases.Add(canvas);
                         }
@@ -604,18 +761,15 @@ namespace XpsViewer
         {
             imageEmbeddings = new EmbeddingVector[bitmapSource.Count];
 
-
+            // create instance of imageembeddingcreator for type text
+            var textImageEmbedCreator = await ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Text);
+            // initialize imagetextembeddings and imageindexesfortext
+            imageTextEmbeddings = new List<EmbeddingVector>();
+            imageIndexesForText = new List<int>();
+            
             for (int i = 0; i < bitmapSource.Count; i++)
             {
                 BitmapSource bitSource = bitmapSource[i]; // Your BitmapSource
-                /*                                          // Ensure the BitmapSource is in Bgra32 format, or convert it if necessary
-                if (bitSource.Format != PixelFormats.Bgra32)
-                {
-                    // Conversion to Bgra32 format is required
-                    bitSource = new FormatConvertedBitmap(bitSource, PixelFormats.Bgra32, null, 0);
-                }*/
-
-                // Get pixels as an array of bytes
                 var stride = bitSource.PixelWidth * bitSource.Format.BitsPerPixel / 8;
                 var bytes = new byte[stride * bitSource.PixelHeight];
                 bitSource.CopyPixels(bytes, stride, 0);
@@ -625,7 +779,34 @@ namespace XpsViewer
                 ImageBuffer imageBuffer = new ImageBuffer(buffer, Microsoft.Windows.Imaging.PixelFormat.Bgra32, (uint) bitSource.PixelWidth, (uint) bitSource.PixelHeight);
                 //imageBuffer.CopyFromBuffer(bytes);
 
-                if (imageEmbedCreator == null) { imageEmbedCreator = await ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Image); }
+                Microsoft.Windows.Vision.TextRecognizer textRecognizer = await TextRecognizer.CreateAsync();
+                var textRecognized = await textRecognizer.RecognizeTextFromImageAsync(imageBuffer, null);
+                string text = "";
+
+                if (textRecognized.Lines != null)
+                {
+                    // Loop through the recognized text lines
+                    foreach (var line in textRecognized.Lines)
+                    {
+                        // Extract the text from the line
+                        text = line.Text;
+                        try
+                        {
+                            var textEmbedding = await textImageEmbedCreator.CreateVectorForTextAsync(text);
+                            //update imageTextEmbeddings and imageIndexesForText
+                            imageTextEmbeddings.Add(textEmbedding);
+                            imageIndexesForText.Add(i);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine(ex.Message);
+                        }
+                    }
+                }
+                if (imageEmbedCreator == null) 
+                { 
+                    imageEmbedCreator = await ImageSearchEmbeddingsCreator.CreateAsync(ImageSearchEmbeddingsType.Image);
+                }
 
                 imageEmbeddings[i] = await imageEmbedCreator.CreateVectorForImageAsync(imageBuffer);
             }
@@ -641,8 +822,14 @@ namespace XpsViewer
             embeddings = new EmbeddingVector[actualSentences.Count];
             for (int i = 0; i < actualSentences.Count; i++)
             {
-
-                embeddings[i] = await embedCreator.CreateVectorForTextAsync(actualSentences[i]);
+                try
+                {
+                    embeddings[i] = await embedCreator.CreateVectorForTextAsync(actualSentences[i]);
+                }
+                catch (Exception ex)
+                {
+                    embeddings[i] = null;
+                }
             }
 
 

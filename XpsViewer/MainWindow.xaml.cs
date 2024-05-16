@@ -132,6 +132,17 @@ namespace XpsViewer
 */
         }
 
+        private void SearchToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            dv.IsTextSearch = false;
+        }
+
+        private void SearchToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            dv.IsTextSearch = true;
+        }
+
+
         private async Task showImages(List<BitmapSource> images, List<System.Windows.Shapes.Path> paths, List<System.Windows.Controls.Canvas> canvases)
         {
             int i = 0;
